@@ -1,0 +1,469 @@
+---
+title: "COVID-19 Platform"
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: scroll
+    orientation: rows
+    source_code: https://github.com/YasinKhc/COVID-19-Platform
+    theme: 
+      version: 4
+      bootswatch: sandstone
+runtime: shiny
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(flexdashboard)
+```
+
+
+```{css}
+/* Set font color of inactive tab to green */
+.nav-tabs-custom .nav-tabs > li > a {
+  color: green;
+} 
+
+/* Set font color of active tab to red */
+.nav-tabs-custom .nav-tabs > li.active > a {
+  color: red;
+} 
+
+/* To set color on hover */
+.nav-tabs-custom .nav-tabs > li.active > a:hover {
+  color: black;
+}
+```
+
+```{css}
+.sliderbox {
+  background-color: #737373;
+    color: black;
+}
+.my-header-color {
+  color: black;
+}
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(readr)
+library(mapcan)
+library(tidyverse)
+library(lubridate)
+library(crosstalk)
+library(highcharter)
+library(viridisLite)
+library(fontawesome)
+library(kableExtra)
+library(purrr)
+
+mapdata <- get_data_from_map(download_map_data("countries/ca/ca-all"))
+
+mapdata <- mapdata %>% select(name, longitude, latitude)
+
+## Use invalidateLater() to automatically update datasets (12 hours).
+## We can also do this using reactiveFileReader().
+
+map_dataco <- reactive({
+  invalidateLater(43200000, session = NULL)
+  read_csv("https://opendata.arcgis.com/datasets/4007a7d2396a4966816628d3abc058c2_0.csv")
+ })
+
+tidy_data1 <- reactive({map_dataco() %>% select(name = NAME, Case_Total, Recovered, Deaths, Tests, ActiveCases, Hospitalized, ICU)
+})
+
+tidy_data <- reactive({
+df <- tidy_data1()
+df$name <- df$name %>% str_replace_all(pattern = "Quebec", replacement = "Québec")
+df
+})
+
+map_data <- reactive(mapdata[-1,] %>% left_join(tidy_data(), by="name"))
+
+colors <- viridis(n = 13, alpha = 1, begin = 0, end = 1, direction = 1, option = "C")
+
+cucovid_data1 <- reactive({
+   invalidateLater(43200000, session = NULL)
+   read_csv("https://github.com/owid/covid-19-data/raw/master/public/data/owid-covid-data.csv")
+   })
+
+## There are some discrepancies between map data and COVID-19 data.
+## In what follows we resolve those discrepancies.
+
+cucovid_data <- reactive({
+  df_w <- cucovid_data1()
+  df_w$location[which(df_w$location=="Micronesia (country)")] <- "Federated States of Micronesia"
+  df_w$location[which(df_w$location=="United States")] <- "United States of America"
+  df_w$location[which(df_w$location=="Samoa")] <- "American Samoa"
+  df_w$location[which(df_w$location=="Tanzania")] <- "United Republic of Tanzania"
+  df_w$location[which(df_w$location=="Bahamas")] <- "The Bahamas"
+  df_w$location[which(df_w$location=="Timor")] <- "East Timor"
+  df_w$location[which(df_w$location=="Congo")] <- "Republic of Congo"
+  df_w$location[which(df_w$location=="Cyprus")] <- "Cyprus No Mans Area"
+  df_w$location[which(df_w$location=="Democratic Republic of Congo")] <- "Democratic Republic of the Congo"
+  df_w$location[which(df_w$location=="Serbia")] <- "Republic of Serbia"
+  df_w$location[which(df_w$location=="North Macedonia")] <- "Macedonia"
+  df_w$location[which(df_w$location=="Czechia")] <- "Czech Republic"
+  df_w$location[which(df_w$location=="Cote d'Ivoire")] <- "Ivory Coast"
+  df_w$location[which(df_w$location=="Eswatini")] <- "Swaziland"
+  df_w
+})
+
+ccovid_data <- reactive({
+  cucovid_data() %>% filter(location=="Canada")
+})
+```
+
+# Interactive map {data-icon="fa-globe"}
+
+## Date sidebar {.sidebar data-width=300}
+
+```{r}
+selectInput(inputId = "geo_loc", label = "Indicate what map to chart", choices = c("Canada", "World"), selected = "World")
+```
+
+```{r}
+dateInput(inputId = "Wmdate", label = "Select a date (only for the world map)",
+          value = as.Date("2022-04-11"), min = as.Date("2020-01-01"),
+          max = as.Date("2022-04-11"), format = "yyyy-mm-dd",
+          startview = "month", weekstart = 0, language = "en")
+```
+
+```{r}
+observe({
+  mani <- c(min(cucovid_data()$date), max(cucovid_data()$date))
+  updateDateInput(inputId = "Wmdate", value = mani[2]-1,
+                  min = mani[1], max = mani[2],
+                  label = "Select a date (only for the world map)")
+  })
+```
+
+```{r}
+selectInput(inputId = "select", label = "Hover information (only for the world map)", choices = c("Brief summary" = "BS", "Chart" = "CH"), selected = "BS")
+```
+
+```{r}
+Mloc <- reactive(input$geo_loc)
+
+renderUI({
+  if(Mloc() == "Canada"){
+  tagList(tags$p(style = "text-align: justify; color: #440154FF", "READ ME", tags$br(), "This is an interactive map that depicts real-time situations about COVID-19 for each", strong("province"), "in", strong("Canada.")," Hover your mouse over the map to display a brief summary of the most recent situation for the province of your interest. It may take a few seconds for the program to generate the map."))
+  }else{
+    tagList(tags$p(style = "text-align: justify; color: #440154FF", "READ ME", tags$br(), "This is an interactive map that depicts real-time situations about COVID-19 in each", strong("country.")," Hover your mouse over the map to display a brief summary or a chart of cumulative confirmed cases for the country of your interest. Sometimes you may see a", strong("colorless map")," which is an indication of having no information on the most recent date. Please choose a different date to update the map."))
+    }
+  })
+
+tags$p(style = "text-align: justify; color: #440154FF", "This web app automatically updates every 12 hours.")
+```
+
+## Row {data-height=1000}
+
+### Interactive map
+
+```{r}
+world_mapdata <- get_data_from_map(download_map_data("custom/world-highres3"))
+
+world_mapdata <- world_mapdata %>% select(name)
+
+world_colors <- viridis(n = nrow(world_mapdata), alpha = 1, begin = 0, end = 1, direction = 1, option = "C")
+
+interdata_curve <- reactive(cucovid_data() %>% rename(name = location) %>% select(name, total_cases, date))
+
+interdata <- reactive(cucovid_data() %>% rename(name = location) %>% filter(date==input$Wmdate))
+
+intmdata <- reactive(left_join(world_mapdata, interdata(), by = "name"))
+
+Mhover <- reactive(input$select)
+
+renderHighchart({
+  if(Mloc() == "Canada"){
+  hcmap(
+    "countries/ca/ca-all",
+    data = map_data() %>% mutate(value = Case_Total),
+    value = "value",
+    joinBy = c("name"),
+    name = "COVID-19 Situation",
+    tooltip = list(pointFormat = "{point.name} </br> 
+                 Total tests: {point.Tests} </br>
+                 Total cases: {point.Case_Total} </br>
+                 Total recovered cases: {point.Recovered} </br>
+                 Total deaths: {point.Deaths} </br>
+                 Active cases: {point.ActiveCases} </br>
+                 Hospitalized cases: {point.Hospitalized} </br>
+                 ICU cases: {point.ICU}"),
+    dataLabels = list(enabled = TRUE, format = "{point.name}"),
+    borderColor = "#FAFAFA",
+    borderWidth = 0.1
+    ) %>% hc_colorAxis(minColor = colors[1], maxColor = colors[13], 
+                   stops = color_stops(n=length(colors), colors = colors)) %>%
+    hc_mapNavigation(enabled = TRUE)
+  }else{
+    back_data <- intmdata() %>% mutate(value = total_cases)
+    curve_data <- interdata_curve() %>% nest(-name) %>%
+      mutate(data = map(data, mutate_mapping,
+                        hcaes(x = 1:length(date), y = total_cases), drop = TRUE),
+             data = map(data, list_parse)) %>% rename(linedata = data)
+    
+    org_data <- left_join(back_data, curve_data, by = "name")
+    
+    MWM <- hcmap(
+      "custom/world-highres3",
+      data = org_data,
+      value = "value",
+      joinBy = "name",
+      name = "COVID-19 Situation",
+      dataLabels = list(enabled = TRUE, format = "{point.name}"),
+      borderColor = "#FAFAFA",
+      borderWidth = 0.1) %>% hc_colorAxis(minColor = world_colors[1], maxColor = world_colors[length(world_colors)], stops = color_stops(n = length(world_colors), colors = world_colors)) %>% hc_mapNavigation(enabled = TRUE)
+      
+      if(Mhover() == "BS"){
+      MWM %>% hc_tooltip(pointFormat = "{point.name} </br> 
+                 Stringency index: {point.stringency_index} </br> 
+                 Total tests: {point.total_tests} </br>
+                 Total cases: {point.total_cases} </br>
+                 Total deaths: {point.total_deaths} </br>
+                 New cases: {point.new_cases} </br>
+                 New deaths: {point.new_deaths} </br>
+                 Hospitalized cases: {point.hosp_patients} </br>
+                 ICU cases: {point.icu_patients} </br>
+                 Total vaccinated (per 100 people): {point.total_vaccinations_per_hundred} </br>
+                 Population: {point.population} </br>
+                 Proportion of population ages 65 and above: {point.aged_65_older} </br> 
+                 Diabetes prevalence: {point.diabetes_prevalence}")
+        }else{
+          MWM %>% hc_tooltip(useHTML = TRUE,
+                   pointFormatter = tooltip_chart(accesor = "linedata",
+                                                  hc_opts = list(legend = list(enabled = FALSE),
+                                                                 series = list(list(color = "gray", name = "point.name")),
+                                                                 title = list(text = "point.continent"),
+                                                                 xAxis = list(title = list(text = "Day number")),
+                                                                 yAxis = list(title = list(text = "Cumulative confirmed cases")))))
+        }
+    }
+  })
+```
+
+COVID-19 Situation in Canada {data-icon="fa-map"}
+======================================================
+
+## Row
+
+### [Date range]{.my-header-color} { .sliderbox}
+
+```{r}
+div(style = "margin: auto; width: 80%",
+    sliderInput("rangevalues", label = "",
+             min = as.Date("2020-01-23"), max = as.Date("2022-04-11"),
+             value = c(as.Date("2020-07-23"), as.Date("2022-04-11")-8), step = 1,
+             width = "400px",
+             ticks = FALSE)
+)
+```
+
+```{r}
+observe({
+  manis <- c(min(ccovid_data()$date), max(ccovid_data()$date))
+  
+  updateSliderInput(inputId = "rangevalues", value = c(as.Date("2020-07-23"), manis[2]-8),
+                    min = manis[1], max = manis[2],
+                    label = "", step = 1)
+  })
+```
+
+### Case fatality rate (per 100 COVID-19 cases)
+
+```{r}
+rate = reactive({
+  ccovid_data()$total_deaths[which(ccovid_data()$date==input$rangevalues[2])]*100/ccovid_data()$total_cases[which(ccovid_data()$date==input$rangevalues[2])]
+    })
+
+renderValueBox({
+  valueBox(value = round(rate(),2),
+    icon = "fa-chart-line",
+    caption = tags$p(fa("bed", fill = "red"), "Case fatality rate (per 100 COVID-19 cases)"),
+    color = "orange")
+  })
+```
+
+### Stringency index
+
+```{r}
+String <- reactive({
+  ccovid_data()$stringency_index[which(ccovid_data()$date==input$rangevalues[2])]
+  })
+
+renderValueBox({
+  valueBox(value = String(),
+                         icon = "fa-chart-line",
+                         caption = tags$p(fa("shield-virus"), "Stringency index"),
+                         color = "green")
+  })
+```
+
+## Row {.tabset .tabset-fade}
+
+### COVID-19 confirmed new cases/deaths
+
+```{r}
+## Data used in graphs
+
+Data <- reactive({data.frame(
+  Date = ccovid_data()$date[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Cases = ccovid_data()$new_cases_smoothed[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Deaths = ccovid_data()$new_deaths_smoothed[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Ccases = ccovid_data()$total_cases[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Cdeaths = ccovid_data()$total_deaths[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Hcases = ccovid_data()$hosp_patients[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Icucases = ccovid_data()$icu_patients[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Ttests = ccovid_data()$total_tests_per_thousand[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Full_vac = ccovid_data()$people_fully_vaccinated_per_hundred[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)],
+  Tvac = ccovid_data()$total_vaccinations_per_hundred[which((ccovid_data()$date %in% seq(input$rangevalues[1], input$rangevalues[2], by = "days"))==TRUE)])
+})
+
+renderPlotly({
+  subplot(Data() %>% plot_ly(x = ~Date, y = ~Cases, type = "scatter",
+                             mode = "lines", hoverinfo = 'text',
+                             text = ~paste('</br> Date:', Date,
+                                           '</br> New cases:', Cases)) %>%
+            layout(xaxis = list(title = "Date"), yaxis = list(title = "7-day rolling average")),
+          
+          Data() %>% plot_ly(x = ~Date, y = ~Deaths, type = "scatter",
+                             mode = "lines", hoverinfo = 'text',
+                             text = ~paste('</br> Date:', Date,
+                                           '</br> New deaths:', Cases)) %>%
+            layout(xaxis = list(title = "Date"), yaxis = list(title = "7-day rolling average")),
+          
+          titleY = TRUE, titleX = TRUE, margin = 0.03) %>% layout(showlegend = FALSE,
+                                                                  annotations = list(list(x = 0.2, y = 1,
+                                                                                          text = "Daily new confirmed COVID-19 cases",
+                                                                                          xref = "paper",
+                                                                                          yref = "paper",
+                                                                                          xanchor = "center",
+                                                                                          yanchor = "bottom",
+                                                                                          showarrow = FALSE),
+                                                                                     list(x = 0.8, y = 1,
+                                                                                          text = "Daily new confirmed COVID-19 deaths",
+                                                                                          xref = "paper",
+                                                                                          yref = "paper",
+                                                                                          xanchor = "center",
+                                                                                          yanchor = "bottom",
+                                                                                          showarrow = FALSE))
+                                                                  )
+  })
+
+```
+
+### Table
+
+```{r}
+renderUI({
+  HTML(tidy_data() %>% kbl(format = "html", escape = FALSE, align = "c",
+                           booktabs = TRUE,
+                           col.names = c('Province', 'Total cases', 'Total recovered cases', 'Total deaths', 'Total tests', 'Active cases', 'Hospitalized cases', 'ICU cases')) %>%
+         kable_minimal(c("striuped", "hover", "responsive"), fixed_thead=TRUE) %>%
+         column_spec(2, color = "white",background = spec_color(tidy_data()$Case_Total[1:13], end = 0.8)) %>%
+         column_spec(4, color = "white", background = spec_color(tidy_data()$Case_Total[1:13], end = 0.8))
+       # %>% scroll_box(width = "100%", height = "200px")
+       )
+  })
+```
+
+## Row
+
+### COVID-19 cumulative number of confirmed cases
+
+```{r}
+renderPlotly({
+  Data() %>% plot_ly(x = ~Date, y = ~Ccases, type = "scatter", mode = "lines",
+                     hoverinfo = 'text',
+                     text = ~paste('</br> Date:', Date, '</br> Total cases:', Ccases)) %>%
+    layout(title = "", xaxis = list(title = "Date"), yaxis = list(title = "Total cases"))
+  })
+```
+
+### COVID-19 cumulative number of confirmed deaths
+
+```{r}
+renderPlotly({
+  Data() %>% plot_ly(x = ~Date, y = ~Cdeaths, type = "scatter", mode = "lines",
+                                 hoverinfo = 'text',
+                                 text = ~paste('</br> Date:', Date,
+                                               '</br> Total deaths:', Cdeaths)) %>%
+    layout(title = "", xaxis = list(title = "Date"), yaxis = list(title = "Total deaths"))
+  })
+```
+
+## Row
+
+### Total number of patients in hospital/ICU on a given date
+
+```{r}
+renderPlotly({
+  Data() %>% plot_ly(x = ~Date) %>%
+    add_trace(y = ~Hcases, name = 'Hospitalized patients', type = 'scatter', mode = 'lines', hovertemplate = paste('%{y}')) %>%
+    add_trace(y = ~Icucases, name = 'ICU admissions', type = 'scatter', mode = 'lines', hovertemplate = paste('%{y}')) %>%
+    layout(legend = list(x = 0.05, y = 0.95), hovermode = "x unified", yaxis = list(title = ""))
+  })
+
+```
+
+### Total diagnostic tests (per 1000 people)
+
+```{r}
+renderPlotly({
+  Data() %>% plot_ly(x = ~Date, y = ~Ttests, type = "scatter", mode = "lines",
+                                 hoverinfo = 'text', text = ~paste('</br> Date:', Date,
+                                                                   '</br> Total tests:', Ttests)) %>%
+    layout(title = "", xaxis = list(title = "Date"), yaxis = list(title = "Total tests (per 1000 people)"))
+  })
+```
+
+## Row
+
+### Total vaccinations (per 100 people)
+
+```{r}
+renderPlotly({
+  Data() %>% plot_ly(x = ~Date, y = ~Tvac, type = "scatter", mode = "lines",
+                     hoverinfo = 'text', text = ~paste('</br> Date:', Date,
+                                                       '</br> Total vaccinations:', Tvac)) %>%
+    layout(title = "", xaxis = list(title = "Date"), yaxis = list(title = "Total vaccinations (per 100 people)"))
+  })
+```
+
+### Fully vaccinated (per 100 people)
+
+```{r}
+renderPlotly({Data() %>% plot_ly(x = ~Date, y = ~Full_vac, type = "scatter", mode = "lines",
+                                 hoverinfo = 'text', text = ~paste('</br> Date:', Date,
+                                                                   '</br> Fully vaccinated:', Full_vac)) %>%
+    layout(title = "", xaxis = list(title = "Date"), yaxis = list(title = "Fully vaccinated (per 100 people)"))
+  })
+```
+
+MY RESEARCH MANUSCRIPTS {data-icon="fa-book"}
+=====================================
+
+## Row {data-height=1000}
+
+### Articles published in peer-reviewed journals
+
+- Data Visualization and Descriptive Analysis for Understanding Epidemiological Characteristics of COVID-19: A Case Study of a Dataset from January 22, 2020 to March 29, 2020. [Link to the paper](https://doi.org/10.6339/JDS.202007_18(3).0018)
+
+- Is 14-Days a Sensible Quarantine Length for COVID-19? Examinations of Some Associated Issues with a Case Study of COVID-19 Incubation Times. [Link to the paper](https://doi.org/10.1007/s12561-021-09320-8)
+
+- A Real Time and Interactive Web-Based Platform for Visualizing and Analyzing COVID-19 in Canada. [Link to the paper](https://www.ccsenet.org/journal/index.php/ijsp/article/view/0/43346)
+
+DATA SOURCES {data-icon="fa-database"}
+=====================================
+
+## Row {data-height=1000}
+
+### Public Data Sources Used in this Platform
+
+* [COVID-19 Data Repository by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University](https://github.com/CSSEGISandData/COVID-19)
+* [*Our World in Data*](https://github.com/owid/covid-19-data/tree/master/public/data/)
+* [*ArcGIS Hub*](https://hub.arcgis.com/search?collection=Dataset)
